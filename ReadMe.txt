@@ -44,11 +44,29 @@ This training will cover:
   * Setting C++ standard.
   * Building and running a CMake project.
 
------
+**Part 4: Intermediate CMake
 
+  * Structuring larger projects with subdirectories.
+  * Linking libraries (static and shared).
+  * Managing include directories.
+  * Finding external libraries (find_package).
+  * Adding compiler flags and definitions.
+  * Debug and Release builds (CMAKE_BUILD_TYPE).
+  * Generating installation rules (install).
+
+**Part 5: Advanced CMake Concepts
+
+  * Custom commands.
+  * Generator expressions.
+  * FetchContent for dependency management.
+  * Testing with CTest.
+  * Cross-compilation.
+  * Best practices for large projects.
+  * Debugging CMake scripts.
+
+---------------------------------------------------------------------
 Let's begin\!
-
------
+---------------------------------------------------------------------
 
 ## **Part 1: Understanding the Basics (Makefiles)**
 
@@ -734,3 +752,358 @@ This is critical for ensuring your code compiles with a specific C++ standard ac
   * **Clean:** `cmake --build <path_to_build_dir> --target clean` (or just delete the build directory)
 
 -----
+
+Part 4: Intermediate CMake :
+
+4.1 Structuring Larger Projects with Subdirectories -
+For larger projects, breaking down your CMakeLists.txt into multiple files, one per logical module or subdirectory, is essential.
+
+We saw add_subdirectory(my_library) in the previous example. When CMake encounters this command, it processes the CMakeLists.txt file within that subdirectory. This creates a hierarchical build structure.
+
+4.2 Linking Libraries (Static and Shared) - Revisited -
+
+The target_link_libraries() command is fundamental.
+
+target_link_libraries(target_name [PUBLIC|PRIVATE|INTERFACE] library1 library2 ...)
+
+PUBLIC: The target_name links to library1, AND library1's include paths/definitions become part of target_name's public interface. Any target that links to target_name will also implicitly link to library1 and get its public include paths/definitions.
+PRIVATE: The target_name links to library1, but library1's include paths/definitions are not exposed to targets that link to target_name. Only target_name itself needs library1.
+INTERFACE: target_name does not link to library1 itself, but library1's include paths/definitions are exposed to targets that link to target_name. This is useful for header-only libraries or specifying transitive dependencies.
+Best Practice: Always use PUBLIC, PRIVATE, or INTERFACE instead of just listing libraries. This correctly propagates dependencies.
+
+Example (revisiting my_library/CMakeLists.txt):
+
+CMake
+
+# my_project/my_library/CMakeLists.txt
+add_library(MyLibrary STATIC library.cpp)
+
+# If library.h contains definitions or includes that users of MyLibrary need:
+target_include_directories(MyLibrary PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+# If MyLibrary itself uses some other library internally (e.g., CryptoLib)
+# but users of MyLibrary don't need to know about CryptoLib:
+# target_link_libraries(MyLibrary PRIVATE CryptoLib)
+And in the top-level CMakeLists.txt:
+
+CMake
+
+# my_project/CMakeLists.txt
+# ...
+add_executable(my_app main.cpp)
+target_link_libraries(my_app PRIVATE MyLibrary) # My_app only needs MyLibrary's public interface
+
+
+4.3 Managing Include Directories - Revisited - 
+
+include_directories() (Old Way): Adds an include directory to all targets processed after this command. Global and can lead to unintended dependencies. Avoid for new projects.
+
+target_include_directories() (Modern CMake): Associates include directories with specific targets. Much better for modularity and preventing accidental header exposure.
+
+target_include_directories(target_name [PUBLIC|PRIVATE|INTERFACE] /path/to/includes)
+
+PUBLIC: Added to target's own compilation and propagated to targets that link to it.
+PRIVATE: Added only to target's own compilation.
+INTERFACE: Not added to target's own compilation, but propagated to targets that link to it. (Useful for header-only libraries where target_name itself has no source files).
+
+
+4.4 Finding External Libraries (find_package) -
+
+One of CMake's killer features is its ability to find pre-installed libraries on your system.
+
+find_package(PackageName [VERSION] [REQUIRED] [COMPONENTS component1 ...])
+
+PackageName: Common names (e.g., Boost, OpenCV, Qt5, ZLIB).
+VERSION: Minimum required version.
+REQUIRED: If not found, CMake will stop with an error.
+COMPONENTS: Specific modules of a library (e.g., find_package(Qt5 COMPONENTS Widgets Core REQUIRED)).
+When find_package() succeeds, it sets several variables:
+
+PackageName_FOUND: True/False.
+PackageName_INCLUDE_DIRS or PackageName_INCLUDE_DIR: Paths to headers.
+PackageName_LIBRARIES or PackageName_LIBS: Paths to libraries.
+Modern CMake (Config-file packages): It also defines imported targets like PackageName::ComponentName. These are preferred for linking.
+Example with find_package (e.g., using Boost):
+
+CMake
+
+cmake_minimum_required(VERSION 3.10)
+project(MyBoostApp CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Find the Boost library
+# find_package(Boost 1.70 COMPONENTS system filesystem REQUIRED) # With components
+find_package(Boost REQUIRED) # Basic find
+
+# If Boost is found, add executable and link
+if(Boost_FOUND)
+    message(STATUS "Boost found. Version: ${Boost_VERSION}")
+
+    add_executable(my_boost_app main.cpp)
+
+    # Link against Boost
+    # Using imported targets is the modern and recommended way
+    target_link_libraries(my_boost_app PRIVATE Boost::system Boost::filesystem) # If you found components
+
+    # Or if not using components, use the old way:
+    # target_link_libraries(my_boost_app PRIVATE ${Boost_LIBRARIES})
+    # target_include_directories(my_boost_app PRIVATE ${Boost_INCLUDE_DIRS}) # Not strictly needed if using imported targets
+else()
+    message(FATAL_ERROR "Boost not found. Please install Boost or set BOOST_ROOT.")
+endif()
+find_package streamlines linking to complex external libraries significantly.
+
+4.5 Adding Compiler Flags and Definitions - 
+
+add_compile_options(-Wall -Wextra -pedantic): Adds compiler options to all targets defined after this command. (Global scope).
+target_compile_options(target_name [PUBLIC|PRIVATE|INTERFACE] option1 option2 ...): Adds options to a specific target. Recommended.
+add_compile_definitions(MACRO_NAME): Adds a #define MACRO_NAME to all targets.
+target_compile_definitions(target_name [PUBLIC|PRIVATE|INTERFACE] MACRO_NAME): Adds definitions to a specific target. Recommended.
+Example:
+
+CMake
+
+add_executable(my_app main.cpp)
+target_compile_options(my_app PRIVATE -Werror -Wno-unused-variable) # Treat warnings as errors, disable one warning
+target_compile_definitions(my_app PRIVATE VERSION="1.0" DEBUG_BUILD) # Define macros
+
+4.6 Debug and Release Builds (CMAKE_BUILD_TYPE) -
+
+CMake understands different build configurations. This is usually set when configuring the project.
+
+Common CMAKE_BUILD_TYPE values:
+
+Debug: Full debug symbols (-g), no optimization.
+Release: Optimized code (-O3), no debug symbols.
+RelWithDebInfo: Optimized code (-O2), with debug symbols.
+MinSizeRel: Optimized for minimum size.
+How to set it:
+
+Bash
+
+mkdir build_debug
+cd build_debug
+cmake .. -DCMAKE_BUILD_TYPE=Debug # Set build type during configure step
+cmake --build .
+Bash
+
+mkdir build_release
+cd build_release
+cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake --build .
+You can customize compiler flags for each build type using generator expressions (advanced topic, Part 5) or by checking CMAKE_BUILD_TYPE directly in CMakeLists.txt (less flexible).
+
+4.7 Generating Installation Rules (install) -
+
+The install() command defines what files get copied where when cmake --install . is run. This is crucial for distributing your software.
+
+CMake
+
+# In top-level CMakeLists.txt
+install(TARGETS my_app DESTINATION bin) # Install executable to 'bin' directory
+install(TARGETS MyLibrary DESTINATION lib) # Install library to 'lib' directory
+install(FILES my_library/library.h DESTINATION include) # Install header to 'include'
+
+# You can specify a prefix for installation:
+# cmake --install . --prefix /usr/local
+# Or: cmake --install . --prefix C:/Program Files/MySoftware
+
+
+Part 5: Advanced CMake Concepts :
+
+5.1 Custom Commands -
+
+You can define custom commands to run scripts or tools during the build process.
+
+add_custom_command(): Defines a command to be executed.
+add_custom_target(): Defines a target that always runs its commands (like .PHONY in Make).
+
+Example: Generating a source file from a text file
+
+CMake
+
+# Generate a version.h file from current date
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/version.h
+    COMMAND ${CMAKE_COMMAND} -DDATE=$<SHELL_COMMAND:date +%Y%m%d> -P ${CMAKE_CURRENT_SOURCE_DIR}/generate_version.cmake
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/generate_version.cmake # If generate_version.cmake changes, rerun
+    COMMENT "Generating version.h"
+)
+
+# Add version.h to the executable's sources
+add_executable(my_app main.cpp ${CMAKE_CURRENT_BINARY_DIR}/version.h)
+
+# Ensure the generated header's directory is in include path
+target_include_directories(my_app PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+generate_version.cmake (CMake script to be run by add_custom_command):
+
+CMake
+
+# generate_version.cmake
+# This script is executed by CMake -P flag
+
+file(WRITE "${CMAKE_BINARY_DIR}/version.h" "#define MY_APP_VERSION_DATE \"${DATE}\"\n")
+
+5.2 Generator Expressions -
+
+Generator expressions allow you to specify conditional logic based on build configuration, platform, or target properties. They are evaluated during the build system generation phase, not when CMake is first run.
+
+Syntax: $<KEY:value>
+
+Common uses:
+
+Adding different compiler flags for Debug vs. Release: target_compile_options(my_app PRIVATE "$<$<CONFIG:Debug>:-DDEBUG_MODE>") target_compile_options(my_app PRIVATE "$<$<CONFIG:Release>:-O3>")
+Conditional linking based on platform: target_link_libraries(my_app PRIVATE "$<$<PLATFORM_ID:Linux>:-lpthread>")
+Adding different definitions: target_compile_definitions(my_app PRIVATE "$<$<CONFIG:Debug>:DEBUG_VERSION>")
+Generator expressions are powerful but can make CMakeLists.txt less readable if overused.
+
+5.3 FetchContent for Dependency Management -
+
+FetchContent is a modern CMake module that allows you to download, configure, and build external dependencies as part of your project's build process. This is excellent for ensuring reproducible builds and simplifying setup for new developers.
+
+CMake
+
+cmake_minimum_required(VERSION 3.14) # FetchContent needs 3.14+
+project(MyAppWithExternalLib CXX)
+
+include(FetchContent)
+
+# Define an external library to fetch (e.g., Catch2 for testing)
+FetchContent_Declare(
+  Catch2
+  GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+  GIT_TAG        v3.4.0
+)
+
+# Make Catch2 available in your build
+FetchContent_MakeAvailable(Catch2)
+
+# Now you can use Catch2 targets
+add_executable(my_app main.cpp)
+
+# Link your app against Catch2's main library
+target_link_libraries(my_app PRIVATE Catch2::Catch2WithMain) # Example Catch2 target
+
+# Add a test executable
+add_executable(test_runner test.cpp)
+target_link_libraries(test_runner PRIVATE Catch2::Catch2)
+add_test(NAME MyTests COMMAND test_runner)
+This avoids manual downloading and installing of libraries.
+
+5.4 Testing with CTest -
+
+CMake integrates with CTest, its testing framework.
+
+Enable testing: enable_testing() (usually at the top-level CMakeLists.txt).
+Add tests: add_test(NAME TestName COMMAND executable_to_run_tests [ARGS ...])
+Example (using Catch2 for tests, see FetchContent example above):
+
+test.cpp:
+
+C++
+
+// test.cpp
+#define CATCH_CONFIG_MAIN // This tells Catch2 to provide a main() function
+#include <catch2/catch_test_macros.hpp>
+
+unsigned int factorial( unsigned int number ) {
+    return number <= 1 ? number : factorial(number-1)*number;
+}
+
+TEST_CASE( "Factorials are computed", "[factorial]" ) {
+    REQUIRE( factorial(1) == 1 );
+    REQUIRE( factorial(2) == 2 );
+    REQUIRE( factorial(3) == 6 );
+    REQUIRE( factorial(10) == 3628800 );
+}
+CMakeLists.txt (continued from FetchContent example):
+
+CMake
+
+# ... (FetchContent for Catch2 as shown above)
+
+# Add a test executable
+add_executable(test_runner test.cpp)
+target_link_libraries(test_runner PRIVATE Catch2::Catch2) # Link to Catch2's test library
+
+# Add the test to CTest
+enable_testing() # Must be called once in the top-level CMakeLists.txt
+add_test(NAME MyTests COMMAND test_runner) # This registers 'test_runner' with CTest
+Running tests:
+
+Bash
+
+mkdir build
+cd build
+cmake ..
+cmake --build .
+ctest # Run all registered tests
+
+5.5 Cross-Compilation -
+
+Cross-compilation means compiling code on one architecture/OS (host) to run on another (target). CMake handles this beautifully using toolchain files.
+
+A toolchain file (.cmake file) specifies the compiler, sysroot, and other settings for the target platform.
+
+Example Toolchain File (arm-linux-gnueabihf.cmake):
+
+CMake
+
+# arm-linux-gnueabihf.cmake
+# Toolchain file for cross-compiling to ARM Linux
+
+set(CMAKE_SYSTEM_NAME Linux)
+set(CMAKE_SYSTEM_PROCESSOR arm)
+
+# Specify the cross-compiler
+set(CMAKE_C_COMPILER arm-linux-gnueabihf-gcc)
+set(CMAKE_CXX_COMPILER arm-linux-gnueabihf-g++)
+
+# Specify sysroot (where target system headers and libraries are)
+set(CMAKE_SYSROOT /path/to/arm-linux-gnueabihf/sysroot)
+
+# Specify architecture flags if needed
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=armv7-a -mfloat-abi=hard -mfpu=neon")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv7-a -mfloat-abi=hard -mfpu=neon")
+
+# Search for programs in the host PATH, but libraries in the sysroot
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+Using the toolchain file:
+
+Bash
+
+mkdir build_arm
+cd build_arm
+cmake .. -DCMAKE_TOOLCHAIN_FILE=/path/to/arm-linux-gnueabihf.cmake
+cmake --build .
+This will build an executable for the ARM Linux target.
+
+5.6 Best Practices for Large Projects - 
+
+Out-of-source builds (always).
+Modular CMakeLists.txt: Use add_subdirectory() to organize code into logical modules. Each subdirectory should have its own CMakeLists.txt defining its targets (libraries/executables) and their dependencies.
+Modern CMake (target_... commands): Prefer target_include_directories, target_link_libraries, target_compile_options, target_compile_definitions over their global counterparts (include_directories, etc.).
+Public/Private/Interface: Carefully use these keywords to manage transitive dependencies correctly.
+Find or Fetch: Use find_package for system-installed libraries and FetchContent for project-specific dependencies.
+Version Control: Commit your CMakeLists.txt files to version control.
+Presets (CMake 3.19+): Use CMakePresets.json and CMakeUserPresets.json to define common configure and build settings (e.g., debug/release, specific compilers, build environments). This simplifies workflow for teams.
+CTest for Unit Testing: Integrate your testing framework (Google Test, Catch2, doctest) with CTest.
+Documentation: Add comments to your CMakeLists.txt files explaining complex logic.
+Avoid complex scripting: If your CMakeLists.txt becomes too complex, consider if some logic could be moved into a separate CMake script (.cmake file) and included using include().
+
+5.7 Debugging CMake Scripts - 
+
+message(STATUS "..."): Prints a message to the console during CMake configuration. Use this extensively to inspect variable values.
+message(FATAL_ERROR "..."): Prints an error and stops configuration. Useful for validating assumptions.
+cmake --trace: Provides a very verbose trace of every CMake command executed. Overwhelming for large projects, but useful for small snippets.
+cmake --trace-expand: Similar to --trace, but expands variables.
+cmake --trace-source=<file>: Trace only commands from a specific CMakeLists.txt file.
+cmake_print_variables(): A module function (include(CMakePrintHelpers)) that can print multiple variables concisely.
+Looking at generated build files: Sometimes, examining the generated Makefile (or .vcxproj on Windows) can reveal what CMake is actually doing.
+
+
